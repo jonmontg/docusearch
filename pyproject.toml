@@ -1,0 +1,33 @@
+[project]
+name = "docusearch"
+version = "0.1.0"
+description = "Building blocks for document search and retrieval in Python."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Jon Montgomery" },
+]
+dependencies = [
+    "chonkie>=1.5.5",
+    "docling>=2.72.0",
+    "faiss-cpu>=1.13.2",
+    "numpy>=1.24",
+    "polars>=1.38.0",
+    "tqdm>=4.67.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/jonmontgomery/docusearch"
+Source = "https://github.com/jonmontgomery/docusearch"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/docusearch"]
+
+[tool.uv]
+package = true
+
