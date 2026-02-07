@@ -1,155 +1,115 @@
 import threading
 import time
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..types import QueryModel
+    from ..types import EmbeddingClient, QueryModel
 
 
 def _estimate_tokens(text: str) -> int:
     """
     Estimate token count from text.
-    
+
     Uses a simple heuristic: ~4 characters per token on average.
     This is a rough estimate and may vary by model.
     """
     return max(1, len(text) // 4)
 
 
-class QueryManager:
+class RateLimitManager:
     """
-    Thread-safe manager for QueryModel that enforces rate limits.
-    
-    Ensures that query_rate_limit and token_rate_limit are respected
-    across multiple threads making concurrent requests.
+    Thread-safe manager that enforces query_rate_limit and token_rate_limit.
+
+    Works with both QueryModel (use .query()) and EmbeddingClient (use .embed()).
+    Ensures limits are respected across multiple threads.
     """
-    
-    def __init__(self, query_model: "QueryModel", window_seconds: int = 60):
+
+    def __init__(self, client: "QueryModel | EmbeddingClient", window_seconds: int = 60):
         """
-        Initialize QueryManager with a QueryModel.
-        
+        Initialize RateLimitManager with a rate-limited client.
+
         Args:
-            query_model: The QueryModel instance to manage
+            client: A QueryModel (has .query) or EmbeddingClient (has .embed)
             window_seconds: Time window in seconds for rate limiting (default: 60)
         """
-        self.query_model = query_model
+        self._client = client
         self.window_seconds = window_seconds
         self._lock = threading.Lock()
-        
-        # Track query timestamps in sliding window
+
         self._query_timestamps: deque[float] = deque()
-        
-        # Track token usage: list of (timestamp, token_count) tuples
         self._token_usage: deque[tuple[float, int]] = deque()
-    
+
+    @property
+    def client(self) -> "QueryModel | EmbeddingClient":
+        """The wrapped client (QueryModel or EmbeddingClient)."""
+        return self._client
+
     def _clean_old_entries(self, current_time: float) -> None:
-        """Remove entries outside the current time window."""
         cutoff_time = current_time - self.window_seconds
-        
-        # Clean query timestamps
         while self._query_timestamps and self._query_timestamps[0] < cutoff_time:
             self._query_timestamps.popleft()
-        
-        # Clean token usage
         while self._token_usage and self._token_usage[0][0] < cutoff_time:
             self._token_usage.popleft()
-    
+
     def _wait_for_query_slot(self, current_time: float) -> float:
-        """
-        Calculate wait time if necessary to respect query_rate_limit.
-        
-        Returns:
-            Wait time in seconds (0 if no wait needed)
-        """
-        if len(self._query_timestamps) >= self.query_model.query_rate_limit:
-            # Need to wait until oldest query falls out of window
-            oldest_query_time = self._query_timestamps[0]
-            wait_time = (oldest_query_time + self.window_seconds) - current_time
+        if len(self._query_timestamps) >= self._client.query_rate_limit:
+            oldest = self._query_timestamps[0]
+            wait_time = (oldest + self.window_seconds) - current_time
             return max(0.0, wait_time)
         return 0.0
-    
+
     def _wait_for_token_capacity(self, current_time: float, required_tokens: int) -> float:
-        """
-        Calculate wait time if necessary to respect token_rate_limit.
-        
-        Returns:
-            Wait time in seconds (0 if no wait needed)
-        """
         current_tokens = sum(tokens for _, tokens in self._token_usage)
-        
-        if current_tokens + required_tokens > self.query_model.token_rate_limit:
-            # Need to wait until enough tokens are available
-            # Calculate when tokens will be available
-            tokens_to_free = (current_tokens + required_tokens) - self.query_model.token_rate_limit
-            
-            # Find the earliest time when enough tokens will be freed
-            freed_tokens = 0
-            wait_until = current_time
-            for timestamp, token_count in self._token_usage:
-                if freed_tokens >= tokens_to_free:
-                    break
-                freed_tokens += token_count
-                wait_until = timestamp + self.window_seconds
-            
-            wait_time = wait_until - current_time
-            return max(0.0, wait_time)
-        return 0.0
-    
-    def query(self, text: str) -> str:
-        """
-        Execute a query through the QueryModel, respecting rate limits.
-        
-        This method is thread-safe and will block if necessary to respect
-        query_rate_limit and token_rate_limit.
-        
-        Args:
-            text: The query text to process
-            
-        Returns:
-            The result from query_model.query(text)
-        """
+        if current_tokens + required_tokens <= self._client.token_rate_limit:
+            return 0.0
+        tokens_to_free = (current_tokens + required_tokens) - self._client.token_rate_limit
+        freed_tokens = 0
+        wait_until = current_time
+        for timestamp, token_count in self._token_usage:
+            if freed_tokens >= tokens_to_free:
+                break
+            freed_tokens += token_count
+            wait_until = timestamp + self.window_seconds
+        return max(0.0, wait_until - current_time)
+
+    def _execute(self, text: str, method_name: str) -> Any:
+        """Run rate-limited logic then call client method (e.g. 'query' or 'embed')."""
         required_tokens = _estimate_tokens(text)
-        
-        # Retry loop to handle race conditions when multiple threads wait
+
         while True:
             current_time = time.time()
-            
+
             with self._lock:
-                # Clean old entries
                 self._clean_old_entries(current_time)
-                current_time = time.time()  # Update after cleanup
-                
-                # Calculate wait times
+                current_time = time.time()
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
                 max_wait = max(query_wait, token_wait)
-            
-            # Sleep outside the lock to avoid blocking other threads
+
             if max_wait > 0:
                 time.sleep(max_wait)
-                # Continue loop to re-check after waiting
                 continue
-            
-            # Try to record the query
+
             with self._lock:
-                # Re-check conditions after acquiring lock (another thread may have taken the slot)
                 current_time = time.time()
                 self._clean_old_entries(current_time)
                 current_time = time.time()
-                
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
-                
                 if query_wait > 0 or token_wait > 0:
-                    # Need to wait more, continue loop
                     continue
-                
-                # Record this query
                 self._query_timestamps.append(current_time)
                 self._token_usage.append((current_time, required_tokens))
-            
-            # Execute query outside the lock to avoid blocking other threads
+
             break
-        
-        return self.query_model.query(text)
+
+        return getattr(self._client, method_name)(text)
+
+    def query(self, text: str) -> str:
+        """Execute a query (for QueryModel). Thread-safe, rate-limited."""
+        return self._execute(text, "query")
+
+    def embed(self, text: str) -> Any:
+        """Execute an embed (for EmbeddingClient). Thread-safe, rate-limited."""
+        return self._execute(text, "embed")

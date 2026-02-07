@@ -13,8 +13,7 @@ from chonkie import SentenceChunker
 import numpy as np
 
 from ..types import EmbeddingClient, QueryModel
-from ..query.query_manager import QueryManager
-from ..query.embedding_manager import EmbeddingManager
+from ..query import RateLimitManager
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +91,7 @@ def silver_database(
 
     records = bronze.to_dicts()
 
-    qm = QueryManager(context_model)
+    qm = RateLimitManager(context_model)
 
     def process_record(record: dict) -> list[dict]:
         # Initialize chunker. Target approximately 500 tokens, no overlap
@@ -157,7 +156,9 @@ def silver_database(
     if not output_rows:
         raise Exception("Failed to generate any output columns.")
 
-    return pl.DataFrame(output_rows)
+    df = pl.DataFrame(output_rows)
+    df.write_parquet(silver_path)
+    logger.info(f"Silver database saved to {silver_path}.")
     
 
 def _normalize_chunks(chunks: List[chonkie.Chunk]) -> list[str]:
@@ -197,8 +198,9 @@ def _file_path_annotations(
             annotations.append(annotation_text)
     return "\n".join(annotations)
 
+
 def _contextual_annotations(
-    ch: str, idx: int, record: dict, qm: QueryManager, database_path: Path
+        ch: str, idx: int, record: dict, qm: RateLimitManager, database_path: Path
 ) -> str:
     """
     Get contextual information about a chunk and its place in a file.
@@ -206,7 +208,8 @@ def _contextual_annotations(
     - ch: chunk text
     - idx: chunk index
     - record: bronze medallion record
-    - context_model: query model
+    - qm: query model
+    - database_path: path to database directory
 
     Returns the contextualized chunk text
     """
@@ -218,7 +221,7 @@ def _contextual_annotations(
         database_path
         / "context"
         / "query_cache"
-        / qm.query_model.model_id
+        / qm.client.model_id
         / Path(file_path).with_suffix("")
         / f"{idx}.txt"
     )
@@ -246,8 +249,8 @@ Please give a short succinct context to situate this chunk within the overall do
 def gold_database(silver_path: Path, gold_path: Path, embedder: EmbeddingClient, database_path: Path):
     gold = pl.read_parquet(silver_path)
 
-    # Create EmbeddingManager to enforce rate limits
-    embedding_manager = EmbeddingManager(embedder)
+    # Create RateLimitManager to enforce rate limits
+    embedding_manager = RateLimitManager(embedder)
 
     # Combine annotations and chunk text for embedding
     gold = gold.with_columns(

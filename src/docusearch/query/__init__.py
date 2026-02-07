@@ -1,7 +1,3 @@
-from .embedding_manager import EmbeddingManager
-from .query_manager import QueryManager
+from .query_manager import RateLimitManager
 
-__all__ = [
-    "EmbeddingManager",
-    "QueryManager",
-]
+__all__ = ["RateLimitManager"]

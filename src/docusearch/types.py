@@ -12,7 +12,8 @@ class EmbeddingClient(Protocol):
     """
 
     dimensions: int
-    query_rate_limit: int
+    query_rate_limit: int  # requests per minute (when window_seconds=60)
+    token_rate_limit: int  # tokens per minute (when window_seconds=60)
     model_id: str
 
     def embed(self, text: str) -> ndarray:  # pragma: no cover - structural type only
