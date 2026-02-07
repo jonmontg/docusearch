@@ -9,13 +9,13 @@ Once this repo is pushed to GitHub, you can install it with:
 - **With uv**:
 
 ```bash
-uv add git+https://github.com/jonmontgomery/docusearch.git
+uv add git+https://github.com/jonmontg/docusearch.git
 ```
 
 - **With pip**:
 
 ```bash
-pip install git+https://github.com/jonmontgomery/docusearch.git
+pip install git+https://github.com/jonmontg/docusearch.git
 ```
 
 ### Usage
