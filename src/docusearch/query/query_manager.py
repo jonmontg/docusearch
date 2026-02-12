@@ -53,17 +53,27 @@ class RateLimitManager:
             self._token_usage.popleft()
 
     def _wait_for_query_slot(self, current_time: float) -> float:
-        if len(self._query_timestamps) >= self._client.query_rate_limit:
+        # Handle None or 0 as "no limit" - skip rate limiting
+        query_limit = getattr(self._client, 'query_rate_limit', None)
+        if query_limit is None or query_limit <= 0:
+            return 0.0
+
+        if len(self._query_timestamps) >= query_limit:
             oldest = self._query_timestamps[0]
             wait_time = (oldest + self.window_seconds) - current_time
             return max(0.0, wait_time)
         return 0.0
 
     def _wait_for_token_capacity(self, current_time: float, required_tokens: int) -> float:
-        current_tokens = sum(tokens for _, tokens in self._token_usage)
-        if current_tokens + required_tokens <= self._client.token_rate_limit:
+        # Handle None or 0 as "no limit" - skip rate limiting
+        token_limit = getattr(self._client, 'token_rate_limit', None)
+        if token_limit is None or token_limit <= 0:
             return 0.0
-        tokens_to_free = (current_tokens + required_tokens) - self._client.token_rate_limit
+
+        current_tokens = sum(tokens for _, tokens in self._token_usage)
+        if current_tokens + required_tokens <= token_limit:
+            return 0.0
+        tokens_to_free = (current_tokens + required_tokens) - token_limit
         freed_tokens = 0
         wait_until = current_time
         for timestamp, token_count in self._token_usage:
