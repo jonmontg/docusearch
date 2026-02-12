@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class SearchClient:
-    def __init__(self, chunk_df: pl.DataFrame, embeddings: np.ndarray, embedder: EmbeddingClient):
+    def __init__(self, chunk_df: pl.DataFrame, embeddings: np.ndarray, embedder: EmbeddingClient, vector_normalize: bool = True):
         self.corpus_series = chunk_df["contextual_chunk"]
         self.corpus_size = len(self.corpus_series)
-        self.vector_db = VectorSearch(embeddings)
+        self.vector_db = VectorSearch(embeddings, embedder, vector_normalize)
         # Initialize BM25 with lazy corpus loading
         self.bm25 = BM25(self.corpus_series.to_list())
 

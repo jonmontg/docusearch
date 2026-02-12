@@ -16,6 +16,7 @@ class Docusearch:
         context_model: QueryModel,
         file_path_annotations_config: str | Path = None,
         force_rebuild: bool = False,
+        vector_normalize: bool = True,
     ):
         self.documents_path = Path(documents_path)
         self.database_path = Path(database_path)
@@ -48,7 +49,7 @@ class Docusearch:
         chunk_df = lazy_df.drop("embedding").collect()
         gc.collect()
 
-        self.search_client = SearchClient(chunk_df, embeddings, self.embedder)
+        self.search_client = SearchClient(chunk_df, embeddings, self.embedder, vector_normalize)
 
     def search(self, query: str, k: int = 10):
         return self.search_client.search(query, k)

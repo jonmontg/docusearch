@@ -9,10 +9,12 @@ from ..types import EmbeddingClient
 logger = logging.getLogger(__name__)
 
 class VectorSearch:
-    def __init__(self, embeddings: np.ndarray, embedder: EmbeddingClient):
+    def __init__(self, embeddings: np.ndarray, embedder: EmbeddingClient, normalize: bool = True):
         self.embedder = embedder
         self.embeddings = embeddings
-        faiss.normalize_L2(self.embeddings)
+        self.normalize = normalize
+        if self.normalize:
+            faiss.normalize_L2(self.embeddings)
         self.index = faiss.IndexFlatIP(embeddings.shape[1])
         self.index.add(self.embeddings)
 
@@ -21,7 +23,8 @@ class VectorSearch:
         x = self.embedder.embed(query)
         logger.info(f"Time to embed query: {time.perf_counter()-t0}")
         t0 = time.perf_counter()
-        faiss.normalize_L2(x)
+        if self.normalize:
+            faiss.normalize_L2(x)
         _, indices = self.index.search(np.array([x]), k)
         logger.info(f"Time to search: {time.perf_counter()-t0}")
         return indices[0].tolist()
