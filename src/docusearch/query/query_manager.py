@@ -67,7 +67,11 @@ class RateLimitManager:
     def _wait_for_token_capacity(self, current_time: float, required_tokens: int) -> float:
         # Handle None or 0 as "no limit" - skip rate limiting
         token_limit = getattr(self._client, 'token_rate_limit', None)
-        if token_limit is None or token_limit <= 0:
+        if token_limit <= 0:
+            raise ValueError(f"Invalid token limit specified for client: {token_limit}. Must be a positive number or None.")
+        if token_limit is not None and required_tokens > token_limit:
+            raise ValueError(f"Request requires {required_tokens} tokens, exceeds limit {token_limit}.")
+        if token_limit is None:
             return 0.0
 
         current_tokens = sum(tokens for _, tokens in self._token_usage)
@@ -83,16 +87,14 @@ class RateLimitManager:
             wait_until = timestamp + self.window_seconds
         return max(0.0, wait_until - current_time)
 
-    def _execute(self, text: str, method_name: str) -> Any:
+    def _execute(self, text: str, method_name: str, *args, **kwargs) -> Any:
         """Run rate-limited logic then call client method (e.g. 'query' or 'embed')."""
         required_tokens = _estimate_tokens(text)
 
         while True:
-            current_time = time.time()
-
             with self._lock:
                 self._clean_old_entries(current_time)
-                current_time = time.time()
+                current_time = time.monotonic()
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
                 max_wait = max(query_wait, token_wait)
@@ -102,24 +104,23 @@ class RateLimitManager:
                 continue
 
             with self._lock:
-                current_time = time.time()
+                current_time = time.monotonic()
                 self._clean_old_entries(current_time)
-                current_time = time.time()
+                current_time = time.monotonic()
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
                 if query_wait > 0 or token_wait > 0:
                     continue
                 self._query_timestamps.append(current_time)
                 self._token_usage.append((current_time, required_tokens))
-
             break
 
-        return getattr(self._client, method_name)(text)
+        return getattr(self._client, method_name)(text, *args, **kwargs)
 
-    def query(self, text: str) -> str:
+    def query(self, text: str, *args, **kwargs) -> str:
         """Execute a query (for QueryModel). Thread-safe, rate-limited."""
-        return self._execute(text, "query")
+        return self._execute(text, "query", *args, **kwargs)
 
-    def embed(self, text: str) -> Any:
+    def embed(self, text: str, *args, **kwargs) -> Any:
         """Execute an embed (for EmbeddingClient). Thread-safe, rate-limited."""
-        return self._execute(text, "embed")
+        return self._execute(text, "embed", *args, **kwargs)
