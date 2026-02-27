@@ -93,8 +93,8 @@ class RateLimitManager:
 
         while True:
             with self._lock:
-                self._clean_old_entries(current_time)
                 current_time = time.monotonic()
+                self._clean_old_entries(current_time)
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
                 max_wait = max(query_wait, token_wait)
@@ -106,7 +106,6 @@ class RateLimitManager:
             with self._lock:
                 current_time = time.monotonic()
                 self._clean_old_entries(current_time)
-                current_time = time.monotonic()
                 query_wait = self._wait_for_query_slot(current_time)
                 token_wait = self._wait_for_token_capacity(current_time, required_tokens)
                 if query_wait > 0 or token_wait > 0:
